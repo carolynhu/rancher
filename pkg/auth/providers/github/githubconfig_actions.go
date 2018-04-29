@@ -79,7 +79,7 @@ func githubRedirectURL(hostname, clientID string, tls bool) string {
 	} else {
 		redirect = githubDefaultHostName
 	}
-	redirect = redirect + "/login/oauth/authorize?client_id=" + clientID
+	redirect = redirect + "/?client_id=" + clientID
 	return redirect
 }
 
