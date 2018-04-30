@@ -1,13 +1,13 @@
 package azuread
 
 type searchResult struct {
-	Items []Account `json:"items"`
+	Items []AzureADAccount `json:"items"`
 }
 
 //Account defines properties an account on github has
-type Account struct {
+type AzureADAccount struct {
 	ObjectID          int    `json:"objectId,omitempty"`
-	AccountName       string `json:"accountName,omitempty"`
+	Name              string `json:"name,omitempty"`
 	UserPrincipalName string `json:"userPrincipalName,omitempty"`
 	ThumbNail         string `json:"thumbNail,omitempty"`
 	DisplayName       string `json:"displayName,omitempty"`

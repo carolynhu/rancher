@@ -16,17 +16,22 @@ import (
 
 	"net/http"
 
+	"strconv"
+
+	"github.com/rancher/norman/httperror"
 	"github.com/rancher/types/apis/management.cattle.io/v3public"
+	"github.com/sirupsen/logrus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
 const (
-	Name                 = "azuread"
-	UserScope            = Name + "_user"
-	GroupScope           = Name + "_group"
-	MemberOfAttribute    = "memberOf"
-	ObjectClassAttribute = "objectClass"
+	Name       = "azuread"
+	UserScope  = Name + "_user"
+	GroupScope = Name + "_group"
+	AUTHORITY  = "https://login.windows.net/common/oauth2/token"
+	//ACCEPT                       = "Accept"
+	//APPLICATION_FORM_URL_ENCODED = "application/x-www-form-urlencoded"
 )
 
 var scopes = []string{UserScope, GroupScope}
@@ -77,6 +82,7 @@ func (p *azureADProvider) AuthenticateUser(input interface{}) (v3.Principal, []v
 
 	return p.loginUser(login, config)
 }
+
 func (p *azureADProvider) SearchPrincipals(searchKey, principalType string, myToken v3.Token) ([]v3.Principal, error) {
 	var principals []v3.Principal
 	var err error
@@ -87,7 +93,7 @@ func (p *azureADProvider) SearchPrincipals(searchKey, principalType string, myTo
 		return principals, nil
 	}
 
-	principals, err = p.searchPrincipals(searchKey, principalType, config)
+	principals, err = p.azureADClient.searchPrincipals(searchKey, principalType, config)
 	if err == nil {
 		for _, principal := range principals {
 			if principal.PrincipalType == "user" {
@@ -118,7 +124,7 @@ func (p *azureADProvider) GetPrincipal(principalID string, token v3.Token) (v3.P
 	scope := parts[0]
 	externalID := strings.TrimPrefix(parts[1], "//")
 
-	principal, err := p.getPrincipal(externalID, scope, config)
+	principal, err := p.azureADClient.getPrincipal(externalID, scope, config)
 	if err != nil {
 		return v3.Principal{}, err
 	}
@@ -171,32 +177,89 @@ func (p *azureADProvider) getAzureADConfig() (*v3.AzureADConfig, error) {
 	return storedAzureADConfig, nil
 }
 
-//func (p *azureADProvider) loginUser(azureADCdredential *v3public.BasicLogin, azureADConfig *v3.AzureADConfig) (v3.Principal, []v3.Principal, map[string]string, error) {
-//	//var userPrincipal v3.Principal
-//	var providerInfo = make(map[string]string)
-//	var err error
-//
-//	if azureADConfig == nil {
-//		azureADConfig, err = p.getAzureADConfig()
-//		if err != nil {
-//			return v3.Principal{}, nil, nil, err
-//		}
-//	}
-//
-//	accessToken, err := p.azureADClient.getAccessToken(azureADConfig)
-//	if err != nil {
-//		logrus.Infof("Error generating accessToken from azuread %v", err)
-//		return v3.Principal{}, nil, nil, err
-//	}
-//	logrus.Debugf("Received AccessToken from azuread %v", accessToken)
-//
-//	providerInfo["access_token"] = accessToken
-//
-//	//user, err := p.azureADClient.getUser(accessToken, azureADConfig)
-//	//if err != nil {
-//	//	return v3.Principal{}, nil, nil, err
-//	//}
-//	//userPrincipal = p.toPrincipal(userType, user, nil)
-//	//userPrincipal.Me = true
-//
-//}
+func (p *azureADProvider) loginUser(azureADCredential *v3public.BasicLogin, azureADConfig *v3.AzureADConfig) (v3.Principal, []v3.Principal, map[string]string, error) {
+	var groupPrincipals []v3.Principal
+	var userPrincipal v3.Principal
+	var providerInfo = make(map[string]string)
+	var err error
+
+	if azureADConfig == nil {
+		azureADConfig, err = p.getAzureADConfig()
+		if err != nil {
+			return v3.Principal{}, nil, nil, err
+		}
+	}
+
+	accessToken, err := p.azureADClient.getAccessToken(azureADCredential, azureADConfig)
+	if err != nil {
+		logrus.Infof("Error generating accessToken from azuread %v", err)
+		return v3.Principal{}, nil, nil, err
+	}
+	logrus.Debugf("Received AccessToken from azuread %v", accessToken)
+
+	providerInfo["access_token"] = accessToken
+
+	userAcct, err := p.azureADClient.getUser(accessToken, azureADConfig)
+	if err != nil {
+		return v3.Principal{}, nil, nil, err
+	}
+	userPrincipal = p.toPrincipal("user", userAcct, nil)
+	userPrincipal.Me = true
+
+	//groupAccts, err := p.azureADClient.getGroup(accessToken, azureADConfig)
+	//if err != nil {
+	//	return v3.Principal{}, nil, nil, err
+	//}
+	//for _, groupAcct := range groupAccts {
+	//	name := groupAcct.Name
+	//	if name == "" {
+	//		name = orgAcct.Login
+	//	}
+	//	groupPrincipal := p.toPrincipal(groupType, orgAcct, nil)
+	//	groupPrincipal.MemberOf = true
+	//	groupPrincipals = append(groupPrincipals, groupPrincipal)
+	//}
+
+	testAllowedPrincipals := azureADConfig.AllowedPrincipalIDs
+	if azureADConfig.AccessMode == "restricted" {
+		testAllowedPrincipals = append(testAllowedPrincipals, userPrincipal.Name)
+	}
+
+	allowed, err := p.userMGR.CheckAccess(azureADConfig.AccessMode, testAllowedPrincipals, userPrincipal, groupPrincipals)
+	if err != nil {
+		return v3.Principal{}, nil, nil, err
+	}
+	if !allowed {
+		return v3.Principal{}, nil, nil, httperror.NewAPIError(httperror.Unauthorized, "unauthorized")
+	}
+
+	return userPrincipal, groupPrincipals, providerInfo, nil
+}
+
+func (p *azureADProvider) toPrincipal(principalType string, acct AzureADAccount, token *v3.Token) v3.Principal {
+	displayName := acct.Name
+	if displayName == "" {
+		displayName = acct.DisplayName
+	}
+
+	princ := v3.Principal{
+		ObjectMeta:  metav1.ObjectMeta{Name: Name + "_" + principalType + "://" + strconv.Itoa(acct.ObjectID)},
+		DisplayName: displayName,
+		Provider:    Name,
+		Me:          false,
+	}
+
+	if principalType == "user" {
+		princ.PrincipalType = "user"
+		if token != nil {
+			princ.Me = p.isThisUserMe(token.UserPrincipal, princ)
+		}
+	} else {
+		princ.PrincipalType = "group"
+		if token != nil {
+			princ.MemberOf = p.isMemberOf(token.GroupPrincipals, princ)
+		}
+	}
+
+	return princ
+}

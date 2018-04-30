@@ -16,9 +16,12 @@ func SetupAuthConfig(ctx context.Context, management *config.ScaledContext, sche
 	Configure(ctx, management)
 
 	authConfigBaseSchema := schemas.Schema(&managementschema.Version, client.AuthConfigType)
-	for _, authConfigSubtype := range authConfigTypes {
-		subSchema := schemas.Schema(&managementschema.Version, authConfigSubtype)
-		GetProviderByType(authConfigSubtype).CustomizeSchema(subSchema)
-		subSchema.Store = subtype.NewSubTypeStore(authConfigSubtype, authConfigBaseSchema.Store)
-	}
+	//for _, authConfigSubtype := range authConfigTypes {
+	//	subSchema := schemas.Schema(&managementschema.Version, authConfigSubtype)
+	//	GetProviderByType(authConfigSubtype).CustomizeSchema(subSchema)
+	//	subSchema.Store = subtype.NewSubTypeStore(authConfigSubtype, authConfigBaseSchema.Store)
+	//}
+	subSchema := schemas.Schema(&managementschema.Version, client.AzureADConfigType)
+	GetProviderByType(client.AzureADConfigType).CustomizeSchema(subSchema)
+	subSchema.Store = subtype.NewSubTypeStore(client.AzureADConfigType, authConfigBaseSchema.Store)
 }
