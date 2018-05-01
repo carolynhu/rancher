@@ -66,6 +66,7 @@ func (p *azureADProvider) CustomizeSchema(schema *types.Schema) {
 
 func (p *azureADProvider) TransformToAuthProvider(authConfig map[string]interface{}) map[string]interface{} {
 	azureADP := common.TransformToAuthProvider(authConfig)
+	//not sure weather should I bother tenantid/clientid/domain that kind of thing
 	return azureADP
 }
 
