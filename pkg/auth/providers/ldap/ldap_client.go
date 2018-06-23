@@ -166,7 +166,81 @@ func (p *ldapProvider) getPrincipalsFromSearchResult(result *ldapv2.SearchResult
 		}
 	}
 
+	var principals []v3.Principal
+	//find nestedGroups
+	for _, principalID := range config.AllowedPrincipalIDs {
+		parts := strings.SplitN(principalID, ":", 2)
+		if len(parts) != 2 {
+			return userPrincipal, groupPrincipals, errors.Errorf("invalid id %v", principalID)
+		}
+		scope := parts[0]
+		userType := strings.Split(scope, "_")[1]
+		externalID := strings.TrimPrefix(parts[1], "//")
+
+		searchDomain := config.UserSearchBase
+		if config.GroupSearchBase != "" {
+			searchDomain = config.GroupSearchBase
+		}
+
+		if strings.EqualFold("group", userType) {
+			result, err := p.findNestedGroups(searchDomain, externalID, config, lConn)
+			if err != nil {
+				return userPrincipal, groupPrincipals, httperror.WrapAPIError(err, httperror.Unauthorized, "authentication failed") // need to reload this error
+			}
+			nestedGroupAttributes := result.Entries[0].Attributes
+			findIfCurrentUserBelongsToAGroup()
+
+		}
+	}
 	return userPrincipal, groupPrincipals, nil
+}
+
+func (p *ldapProvider) findNestedGroups(searchDomain string, externalID string, config *v3.LdapConfig, lConn *ldapv2.Conn) (*ldapv2.SearchResult, error) {
+	search := ldapv2.NewSearchRequest(searchDomain,
+		ldapv2.ScopeBaseObject, ldapv2.NeverDerefAliases, 0, 0, false,
+		"(&("+config.GroupDNAttribute+"="+externalID+")(ObjectClass="+config.GroupObjectClass+")",
+		[]string{"member"}, nil)
+	result, err := lConn.Search(search)
+	if err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+func (p *ldapProvider) findIfCurrentUserBelongsToAGroup() {
+	for len(nestedGroupAttributes) > 0 {
+		for _, attr := range nestedGroupAttributes {
+			searchDN := attr.Values
+			for _, dn := range searchDN {
+				if dn == result.Entries[0].DN {
+					//add this group to groupprincipals
+					principal, err := p.attributesToPrincipal(nestedGroupAttributes, externalID, scope, config)
+					if err != nil {
+						return userPrincipal, groupPrincipals, errors.Errorf("cannot transfer to a valid principal")
+					}
+					principals = append(principals, *principal)
+					nonDupGroupPrincipals = p.findNonDuplicateGroupPrincipals(principals, groupPrincipals, nonDupGroupPrincipals)
+					groupPrincipals = append(groupPrincipals, nonDupGroupPrincipals...)
+					if err != nil {
+						return userPrincipal, groupPrincipals, err
+					} else {
+						return userPrincipal, groupPrincipals, nil
+					}
+				} else {
+					//find nestedGroup
+					search := ldapv2.NewSearchRequest(searchDomain,
+						ldapv2.ScopeBaseObject, ldapv2.NeverDerefAliases, 0, 0, false,
+						"(&("+config.GroupDNAttribute+"="+dn+")(ObjectClass="+config.GroupObjectClass+")",
+						[]string{"member"}, nil)
+					result, err := lConn.Search(search)
+					if err != nil {
+						return userPrincipal, groupPrincipals, httperror.WrapAPIError(err, httperror.Unauthorized, "authentication failed") // need to reload this error
+					}
+					nestedGroupAttributes := result.Entries[0].Attributes
+				}
+			}
+		}
+	}
 }
 
 func (p *ldapProvider) findNonDuplicateGroupPrincipals(newGroupPrincipals []v3.Principal, groupPrincipals []v3.Principal, nonDupGroupPrincipals []v3.Principal) []v3.Principal {
@@ -488,10 +562,11 @@ func (p *ldapProvider) getUserSearchAttributes(config *v3.LdapConfig) []string {
 
 func (p *ldapProvider) getGroupSearchAttributes(config *v3.LdapConfig) []string {
 	ldapConfig := &v3.LdapConfig{
-		GroupMemberUserAttribute: config.GroupMemberUserAttribute,
-		GroupObjectClass:         config.GroupObjectClass,
-		UserLoginAttribute:       config.UserLoginAttribute,
-		GroupNameAttribute:       config.GroupNameAttribute,
-		GroupSearchAttribute:     config.GroupSearchAttribute}
+		GroupMemberUserAttribute:    config.GroupMemberUserAttribute,
+		GroupMemberMappingAttribute: config.GroupMemberMappingAttribute,
+		GroupObjectClass:            config.GroupObjectClass,
+		UserLoginAttribute:          config.UserLoginAttribute,
+		GroupNameAttribute:          config.GroupNameAttribute,
+		GroupSearchAttribute:        config.GroupSearchAttribute}
 	return ldap.GetGroupSearchAttributesForLDAP(ldapConfig)
 }
