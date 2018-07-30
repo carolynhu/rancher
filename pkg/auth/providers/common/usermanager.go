@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
+
 	"time"
 
 	"github.com/pkg/errors"
@@ -234,6 +236,8 @@ func (m *userManager) EnsureUser(principalName, displayName string) (*v3.User, e
 	var err error
 	var labelSet labels.Set
 
+	var mutex = sync.Mutex{}
+	mutex.Lock()
 	// First check the local cache
 	user, err = m.checkCache(principalName)
 	if err != nil {
@@ -285,6 +289,8 @@ func (m *userManager) EnsureUser(principalName, displayName string) (*v3.User, e
 			return nil, err
 		}
 	}
+
+	mutex.Unlock()
 
 	logrus.Infof("Creating globalRoleBindings for %v", user.Name)
 	err = m.createUsersBindings(user)
